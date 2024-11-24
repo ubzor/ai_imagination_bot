@@ -6,6 +6,7 @@
     "license": "MIT",
     "type": "module",
     "dependencies": {
+        "@grammyjs/files": "^1.1.1",
         "dotenv": "^16.4.5",
         "grammy": "^1.32.0"
     },

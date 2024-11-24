@@ -122,6 +122,11 @@
   resolved "https://registry.yarnpkg.com/@esbuild/win32-x64/-/win32-x64-0.23.1.tgz#81fd50d11e2c32b2d6241470e3185b70c7b30699"
   integrity sha512-BHpFFeslkWrXWyUPnbKm+xYYVYruCinGcftSBaa8zoF9hZO4BcSCFUvHVTtzpIY6YzUnYtuEhZ+C9iEXjxnasg==
 
+"@grammyjs/files@^1.1.1":
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/@grammyjs/files/-/files-1.1.1.tgz#f030f6d6b4da945aa4c1a8ff469585492ba6bcbc"
+  integrity sha512-T3vJCVlj76I8d4BUI0MPDyIkfWOkG4NXyy8HDKAmG5tIb1SxMtrQHcwRYCOHeSJ1EvLWtfadFNTbRXuym+8c6Q==
+
 "@grammyjs/types@3.16.0":
   version "3.16.0"
   resolved "https://registry.yarnpkg.com/@grammyjs/types/-/types-3.16.0.tgz#11146a393be84e0368a3bee261dc00b090e8405e"
