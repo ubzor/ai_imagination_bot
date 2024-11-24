@@ -1,0 +1,16 @@
+{
+    "name": "ai_imagination_bot",
+    "version": "1.0.0",
+    "main": "index.ts",
+    "author": "ubzor <forubz@gmail.com>",
+    "license": "MIT",
+    "type": "module",
+    "dependencies": {
+        "dotenv": "^16.4.5",
+        "grammy": "^1.32.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.9.3",
+        "tsx": "^4.19.2"
+    }
+}
