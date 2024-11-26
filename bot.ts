@@ -2,36 +2,25 @@ import fs from 'node:fs'
 
 import 'dotenv/config'
 
-import { Bot, Context, session, SessionFlavor, InputFile } from 'grammy'
-import { FileFlavor, hydrateFiles } from '@grammyjs/files'
+import { Bot, session, InputFile } from 'grammy'
+import { hydrateFiles } from '@grammyjs/files'
 import { FileAdapter } from '@grammyjs/storage-file'
 
 import OpenAI from 'openai'
+
+import {
+    ResponseTypes,
+    Actions,
+    type TextResponse,
+    type ActionResponse,
+    type DiceResponse,
+    type MyContext
+} from './types'
 
 // TODO: заюзать Local Bot API Server
 // @see https://grammy.dev/guide/api#running-a-local-bot-api-server
 
 // TODO: lazy sessions
-
-interface SessionData {
-    chatMessages: OpenAI.ChatCompletionMessageParam[]
-}
-
-// Transformative Context flavor
-type MyContext = FileFlavor<Context> & SessionFlavor<SessionData>
-
-interface TextResponse {
-    type: 'text'
-    voice: OpenAI.Audio.SpeechCreateParams['voice']
-    text: string
-    role: string
-}
-
-// TODO: enum с экшонами
-interface ActionResponse {
-    type: 'action'
-    action: string
-}
 
 class ImaginationBot {
     #bot: Bot<MyContext>
@@ -104,6 +93,7 @@ class ImaginationBot {
             await this.doTheChitChat(ctx)
             await this.sendTextReply(ctx)
             await this.sendVoiceReply(ctx)
+            await this.dispatchActions(ctx)
 
             // TODO: отправлять дополнительно картинку
         } catch (error: any) {
@@ -119,6 +109,7 @@ class ImaginationBot {
             await this.doTheChitChat(ctx)
             await this.sendTextReply(ctx)
             await this.sendVoiceReply(ctx)
+            await this.dispatchActions(ctx)
 
             // TODO: отправлять дополнительно картинку
         } catch (error: any) {
@@ -189,10 +180,6 @@ class ImaginationBot {
     // generates text answer based on session data and stores it to session
     async doTheChitChat(ctx: MyContext) {
         try {
-            // TODO: броски кубиков
-            // const diceMessage = await ctx.replyWithDice('🎲')
-            // console.log(diceMessage)
-
             // generating answer text
             const completion = await this.#openai.chat.completions.create({
                 model: 'gpt-4o',
@@ -239,8 +226,23 @@ class ImaginationBot {
                                     если игрок хочет совершить действие, зависящее от его характеристик или удачи:
 
                                         ROLL_DICE
-                                        
-                            Нельзя использовать объекты первого и второго типа одновременно
+
+                            Третий тип объектов (используется если нужно вывести результаты броска кубика):
+
+                                {
+                                    type: 'dice',
+                                    role: 'имя персонажа/название роли, русскими буквами, который кидал кубик',
+                                    result: 'результат броска кубика'
+                                }
+
+                            Учитывать броски кубика при определении результата действий игроков,
+                            зависящих от их характеристик или удачи,
+                            ранжировать их по шкале от 1 (оглушительный провал) до 20 (полный успех),
+                            при этом чем больше компетенция персонажа в данной области,
+                            тем меньшее количество ему нужно будет выкинуть для успешного выполнения действия.
+
+                            Если использовались броски кубика, то нужно добавить это в массив данных,
+                            выводимых в следующем сообщении (используя третий тип объектов)
                         `
                             .replace(/\s+/g, ' ')
                             .trim()
@@ -248,8 +250,6 @@ class ImaginationBot {
                     ...ctx.session.chatMessages
                 ]
             })
-
-            console.log(completion.choices[0].message)
 
             if (!completion.choices[0].message || !completion.choices[0].message.content?.replace(/\s+/g, ' ').trim()) {
                 throw new Error('No text message')
@@ -260,14 +260,6 @@ class ImaginationBot {
                 ...completion.choices[0].message,
                 content: completion.choices[0].message.content?.replace(/\s+/g, ' ')
             })
-
-            // get last answer action phrases
-            const actionPhrases = this.lastAnswerActionPhrases(ctx)
-
-            if (actionPhrases.find(({ action }) => action === 'START_NEW_GAME')) {
-                // start new game
-                await this.startNewGame(ctx)
-            }
         } catch (error: any) {
             console.log(error)
         }
@@ -282,17 +274,19 @@ class ImaginationBot {
             .replaceAll('\n', '')
 
         // getting phrases from JSON
-        const phrases: TextResponse[] | ActionResponse[] = JSON.parse(trimmedMessageContent)
+        const phrases: (TextResponse | ActionResponse)[] = JSON.parse(trimmedMessageContent)
 
         return phrases
     }
 
     lastAnswerTextPhrases(ctx: MyContext) {
-        return this.lastAnswerPhrases(ctx).filter(({ type }) => type === 'text') as TextResponse[]
+        return this.lastAnswerPhrases(ctx).filter(({ type }) =>
+            [ResponseTypes.Text, ResponseTypes.Dice].includes(type)
+        ) as (TextResponse | DiceResponse)[]
     }
 
     lastAnswerActionPhrases(ctx: MyContext) {
-        return this.lastAnswerPhrases(ctx).filter(({ type }) => type === 'action') as ActionResponse[]
+        return this.lastAnswerPhrases(ctx).filter(({ type }) => type === ResponseTypes.Action) as ActionResponse[]
     }
 
     // returns current message id
@@ -308,13 +302,23 @@ class ImaginationBot {
     async sendTextReply(ctx: MyContext) {
         // formatting reply text
         const answer = this.lastAnswerTextPhrases(ctx)
-            .map(({ text, voice, role }) =>
-                voice === 'nova'
-                    ? text
-                    : `
+            .map((phrase) =>
+                phrase.type === ResponseTypes.Text
+                    ? phrase.voice === 'nova'
+                        ? // narrator text
+                          phrase.text
+                        : // npc text
+                          `
                         <blockquote>
-                            <strong>${role}:</strong>
-                            ${text}
+                            <strong>${phrase.role}:</strong>
+                            ${phrase.text}
+                        </blockquote>
+                    `
+                    : // dice roll result text
+                      `
+                        <blockquote>
+                            <strong>${phrase.role}:</strong>
+                            выбросил ${phrase.result}
                         </blockquote>
                     `
             )
@@ -334,9 +338,13 @@ class ImaginationBot {
 
         // generating voice replies
         const voiceFiles = await Promise.all(
-            phrases.map(async ({ voice, text }, index) => {
+            phrases.map(async (phrase, index) => {
                 const replyPath = `/tmp/${messageId}_reply_${index}.mp3`
-                await this.textToVoiceFile(text, replyPath, voice)
+                await this.textToVoiceFile(
+                    phrase.type === ResponseTypes.Dice ? `${phrase.role}: выбросил ${phrase.result}` : phrase.text,
+                    replyPath,
+                    phrase.type === ResponseTypes.Dice ? 'nova' : phrase.voice
+                )
 
                 return new InputFile(replyPath)
             })
@@ -353,12 +361,52 @@ class ImaginationBot {
         })
     }
 
+    async dispatchActions(ctx: MyContext) {
+        // get last answer action phrases
+        const actionPhrases = this.lastAnswerActionPhrases(ctx)
+
+        if (actionPhrases.find(({ action }) => action === Actions.StartNewGame)) {
+            // start new game
+            await this.startNewGame(ctx)
+        }
+
+        if (actionPhrases.filter(({ action }) => action === Actions.RollDice).length) {
+            await this.rollTheDices(ctx)
+        }
+    }
+
     async startNewGame(ctx: MyContext) {
         ctx.session.chatMessages = []
 
         // TODO: давать вводную инструкцию
 
         return await ctx.reply('Hi!')
+    }
+
+    async rollTheDices(ctx: MyContext) {
+        // get roll count
+        const rollCount = this.lastAnswerActionPhrases(ctx).filter(({ action }) => action === Actions.RollDice).length
+
+        // rolling dices
+        const dices = Array.from({ length: rollCount }, () => Math.floor(Math.random() * 20) + 1)
+
+        ctx.session.chatMessages.push(
+            // setting dice results
+            {
+                role: 'system',
+                content: `На кубик${dices.length > 1 ? 'ах' : 'е'} выпало: ${dices.join(', ')}`
+            },
+            // continuing the game
+            {
+                role: 'user',
+                content: `Продолжаем игру с учётом броска кубик${dices.length > 1 ? 'ов' : 'а'}`
+            }
+        )
+
+        await this.doTheChitChat(ctx)
+        await this.sendTextReply(ctx)
+        await this.sendVoiceReply(ctx)
+        await this.dispatchActions(ctx)
     }
 }
 

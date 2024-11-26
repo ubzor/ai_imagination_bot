@@ -12,10 +12,11 @@ Working features:
 TODO:
 
 -   Rolling a dice
+-   Inventory
+-   Characters info
 -   Setting difficulty mode - creative / challenging
 -   Generating images
 -   Statistics (gameplay, tokens usage, etc)
 -   Move prompts to separate files
 -   Move some string constants to .env
--   Move types to separate file
 -   ...
