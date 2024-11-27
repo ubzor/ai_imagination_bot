@@ -8,15 +8,19 @@ Working features:
 -   Convert answer text to speech, multiple voices
 -   Sending text/speech to TG
 -   Starting new game
+-   Welcome message when starting new game
+-   Rolling a dice
+-   Characteristics
 
 TODO:
 
--   Rolling a dice
+-   Asking about new game settings
 -   Inventory
--   Characters info
 -   Setting difficulty mode - creative / challenging
 -   Generating images
 -   Statistics (gameplay, tokens usage, etc)
--   Move prompts to separate files
--   Move some string constants to .env
+-   Optimize prompts
+-   Store chat messages session data as objects, not stringified JSON
+-   Installation/configure readme
+-   Use templates for text output
 -   ...

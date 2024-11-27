@@ -1,5 +1,7 @@
 import fs from 'node:fs'
 
+import { parse } from 'yaml'
+
 import 'dotenv/config'
 
 import { Bot, session, InputFile } from 'grammy'
@@ -26,13 +28,42 @@ class ImaginationBot {
     #bot: Bot<MyContext>
     #openai: OpenAI
 
+    #initialPrompt: string
+
+    tmpDirectory = '/tmp'
+
     isReady = false
+    numbers: Record<string, string> = {}
+
+    isVoiceReplyEnabled = true
+    isTextReplyEnabled = true
 
     constructor() {
         this.init()
     }
 
     async init() {
+        // setting tmp directory
+        if (process.env.TMP_DIRECTORY) {
+            this.tmpDirectory = process.env.TMP_DIRECTORY
+        }
+
+        // setting isVoiceReplyEnabled
+        if (process.env.VOICE_REPLY_ENABLED === 'false') {
+            this.isVoiceReplyEnabled = false
+        }
+
+        // setting isTextReplyEnabled
+        if (process.env.TEXT_REPLY_ENABLED === 'false') {
+            this.isTextReplyEnabled = false
+        }
+
+        // loading initial prompt
+        this.#initialPrompt = fs.readFileSync('./prompt.txt', 'utf8').replace(/\s+/g, ' ').trim()
+
+        // loading ['1' => 'один', ...] conversion data
+        this.numbers = parse(fs.readFileSync('./numbers.yaml', 'utf8'))
+
         await this.initOpenAI()
         await this.initBot()
 
@@ -44,7 +75,12 @@ class ImaginationBot {
             throw new Error('AI_API_TOKEN is not defined')
         }
 
-        this.#openai = new OpenAI({ baseURL: 'https://api.proxyapi.ru/openai/v1', apiKey: process.env.AI_API_TOKEN })
+        if (!process.env.AI_API_URL) {
+            throw new Error('AI_API_URL is not defined')
+        }
+
+        // initializing openai api
+        this.#openai = new OpenAI({ baseURL: process.env.AI_API_URL, apiKey: process.env.AI_API_TOKEN })
     }
 
     async initBot() {
@@ -52,9 +88,13 @@ class ImaginationBot {
             throw new Error('TELEGRAM_BOT_TOKEN is not defined')
         }
 
+        // initializing telegram bot
         this.#bot = new Bot<MyContext>(process.env.TELEGRAM_BOT_TOKEN)
+
+        // configuring files
         this.#bot.api.config.use(hydrateFiles(this.#bot.token))
 
+        // configuring session storage
         this.#bot.use(
             session({
                 initial: () => ({
@@ -66,6 +106,7 @@ class ImaginationBot {
             })
         )
 
+        // triggered on start command
         this.#bot.command('start', async (ctx) => {
             await this.handleStartCommand(ctx)
         })
@@ -80,6 +121,7 @@ class ImaginationBot {
             await this.handleVoiceMessage(ctx)
         })
 
+        // starting bot
         this.#bot.start()
     }
 
@@ -90,10 +132,7 @@ class ImaginationBot {
     async handleTextMessage(ctx: MyContext) {
         try {
             await this.processTextMessage(ctx)
-            await this.doTheChitChat(ctx)
-            await this.sendTextReply(ctx)
-            await this.sendVoiceReply(ctx)
-            await this.dispatchActions(ctx)
+            await this.processChatAndResponses(ctx)
 
             // TODO: отправлять дополнительно картинку
         } catch (error: any) {
@@ -106,10 +145,7 @@ class ImaginationBot {
     async handleVoiceMessage(ctx: MyContext) {
         try {
             await this.processVoice(ctx)
-            await this.doTheChitChat(ctx)
-            await this.sendTextReply(ctx)
-            await this.sendVoiceReply(ctx)
-            await this.dispatchActions(ctx)
+            await this.processChatAndResponses(ctx)
 
             // TODO: отправлять дополнительно картинку
         } catch (error: any) {
@@ -126,7 +162,7 @@ class ImaginationBot {
 
             // save voice message to temporary file
             const file = await ctx.getFile()
-            const path = await file.download(`/tmp/${messageId}.ogg`)
+            const path = await file.download(`${this.tmpDirectory}/${messageId}.ogg`)
 
             // getting voice message transcription
             const { text } = await this.#openai.audio.transcriptions.create({
@@ -161,6 +197,20 @@ class ImaginationBot {
         ctx.session.chatMessages.push({ role: 'user', content: ctx.message.text })
     }
 
+    async processChatAndResponses(ctx: MyContext) {
+        await this.doTheChitChat(ctx)
+
+        if (this.isTextReplyEnabled) {
+            await this.sendTextReply(ctx)
+        }
+
+        if (this.isVoiceReplyEnabled) {
+            await this.sendVoiceReply(ctx)
+        }
+
+        await this.dispatchActions(ctx)
+    }
+
     async textToVoiceFile(input: string, path: string, voice: OpenAI.Audio.SpeechCreateParams['voice'] = 'shimmer') {
         try {
             const mp3 = await this.#openai.audio.speech.create({
@@ -186,66 +236,7 @@ class ImaginationBot {
                 messages: [
                     {
                         role: 'system',
-                        content: `
-                            Ты выступаешь в роли ведущего в ролевой игре.
-                            Твои сообщения должны содержать строго только массив формата JSON с несколькими видами объектов.
-
-                            Первый вид объектов (используется по умолчанию):
-
-                                {
-                                    type: 'text',
-                                    voice: 'код голоса',
-                                    role: 'имя персонажа/название роли, русскими буквами',
-                                    text - 'фразы рассказчика и NPC'
-                                }
-
-                                У рассказчика голос всегда 'nova'
-                                
-                                другие роли используют один из пяти голосов:
-                                
-                                    ['echo', 'fable', 'onyx'] - для мужских голосов (от низкого к высокому)
-                                    
-                                    ['alloy', 'shimmer'] - для женских голосов (пониже и повыше)
-
-                            Eсли игрок хочет начать новую игру, ему нужно зачитать предупреждение о том что
-                            данные текущей игры будут потеряны и спросить готов ли он продолжить (используя первый тип объектов).
-
-                            Второй вид объектов (используется если нужно выполнить действие):
-
-                                {
-                                    type: 'action',
-                                    action: 'START_NEW_GAME' | 'ROLL_DICE'
-                                }
-
-                                название действия может быть одним из следующих:
-
-                                    если игрок прослушал предупреждение исоглашается с началом новой игры, используем:
-
-                                        START_NEW_GAME
-
-                                    если игрок хочет совершить действие, зависящее от его характеристик или удачи:
-
-                                        ROLL_DICE
-
-                            Третий тип объектов (используется если нужно вывести результаты броска кубика):
-
-                                {
-                                    type: 'dice',
-                                    role: 'имя персонажа/название роли, русскими буквами, который кидал кубик',
-                                    result: 'результат броска кубика'
-                                }
-
-                            Учитывать броски кубика при определении результата действий игроков,
-                            зависящих от их характеристик или удачи,
-                            ранжировать их по шкале от 1 (оглушительный провал) до 20 (полный успех),
-                            при этом чем больше компетенция персонажа в данной области,
-                            тем меньшее количество ему нужно будет выкинуть для успешного выполнения действия.
-
-                            Если использовались броски кубика, то нужно добавить это в массив данных,
-                            выводимых в следующем сообщении (используя третий тип объектов)
-                        `
-                            .replace(/\s+/g, ' ')
-                            .trim()
+                        content: this.#initialPrompt
                     },
                     ...ctx.session.chatMessages
                 ]
@@ -306,9 +297,10 @@ class ImaginationBot {
                 phrase.type === ResponseTypes.Text
                     ? phrase.voice === 'nova'
                         ? // narrator text
-                          phrase.text
-                        : // npc text
                           `
+                          ${phrase.text}
+                        ` // npc text
+                        : `
                         <blockquote>
                             <strong>${phrase.role}:</strong>
                             ${phrase.text}
@@ -322,7 +314,7 @@ class ImaginationBot {
                         </blockquote>
                     `
             )
-            .join('\n')
+            .join('')
             .replace(/\s+/g, ' ')
             .trim()
 
@@ -339,9 +331,14 @@ class ImaginationBot {
         // generating voice replies
         const voiceFiles = await Promise.all(
             phrases.map(async (phrase, index) => {
-                const replyPath = `/tmp/${messageId}_reply_${index}.mp3`
+                // temp file path
+                const replyPath = `${this.tmpDirectory}/${messageId}_reply_${index}.mp3`
+
+                // generating voice reply
                 await this.textToVoiceFile(
-                    phrase.type === ResponseTypes.Dice ? `${phrase.role}: выбросил ${phrase.result}` : phrase.text,
+                    phrase.type === ResponseTypes.Dice
+                        ? `${phrase.role} выбросил ${this.numbers[phrase.result.toString()]}`
+                        : phrase.text,
                     replyPath,
                     phrase.type === ResponseTypes.Dice ? 'nova' : phrase.voice
                 )
@@ -357,7 +354,7 @@ class ImaginationBot {
 
         // deleting temporary voice files
         phrases.forEach((_, index) => {
-            fs.unlinkSync(`/tmp/${messageId}_reply_${index}.mp3`)
+            fs.unlinkSync(`${this.tmpDirectory}/${messageId}_reply_${index}.mp3`)
         })
     }
 
@@ -371,16 +368,24 @@ class ImaginationBot {
         }
 
         if (actionPhrases.filter(({ action }) => action === Actions.RollDice).length) {
+            // roll the dice(s)
             await this.rollTheDices(ctx)
         }
     }
 
     async startNewGame(ctx: MyContext) {
-        ctx.session.chatMessages = []
+        ctx.session.chatMessages = [
+            {
+                role: 'system',
+                content: 'Пользователь ознакомился с предупреждением и подтвердил начало новой игры'
+            },
+            {
+                role: 'user',
+                content: 'Начинаем игру! Расскажи о своём предназначении и предложи дальнейшие шаги.'
+            }
+        ]
 
-        // TODO: давать вводную инструкцию
-
-        return await ctx.reply('Hi!')
+        await this.processChatAndResponses(ctx)
     }
 
     async rollTheDices(ctx: MyContext) {
@@ -403,10 +408,7 @@ class ImaginationBot {
             }
         )
 
-        await this.doTheChitChat(ctx)
-        await this.sendTextReply(ctx)
-        await this.sendVoiceReply(ctx)
-        await this.dispatchActions(ctx)
+        await this.processChatAndResponses(ctx)
     }
 }
 
