@@ -30,8 +30,10 @@ export interface TextResponse {
 
 export interface DiceResponse {
     type: ResponseTypes.Dice
-    result: number
     role: string
+    skill: string
+    base: number
+    result: number
 }
 
 // TODO: enum с экшонами

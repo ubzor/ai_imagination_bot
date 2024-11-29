@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 
 import { parse } from 'yaml'
+import { compileFile, type compileTemplate as CompileTemplate } from 'pug'
 
 import 'dotenv/config'
 
@@ -27,6 +28,10 @@ import {
 class ImaginationBot {
     #bot: Bot<MyContext>
     #openai: OpenAI
+
+    #diceRollCompiler: CompileTemplate
+    #characterTextCompiler: CompileTemplate
+    #narratorTextCompiler: CompileTemplate
 
     #initialPrompt: string
 
@@ -63,6 +68,15 @@ class ImaginationBot {
 
         // loading ['1' => 'один', ...] conversion data
         this.numbers = parse(fs.readFileSync('./numbers.yaml', 'utf8'))
+
+        // init dice roll template compiler
+        this.#diceRollCompiler = compileFile('./templates/diceRoll.pug')
+
+        // init text reply template compiler
+        this.#characterTextCompiler = compileFile('./templates/characterText.pug')
+
+        // init narrator text reply template compiler
+        this.#narratorTextCompiler = compileFile('./templates/narratorText.pug')
 
         await this.initOpenAI()
         await this.initBot()
@@ -297,26 +311,13 @@ class ImaginationBot {
                 phrase.type === ResponseTypes.Text
                     ? phrase.voice === 'nova'
                         ? // narrator text
-                          `
-                          ${phrase.text}
-                        ` // npc text
-                        : `
-                        <blockquote>
-                            <strong>${phrase.role}:</strong>
-                            ${phrase.text}
-                        </blockquote>
-                    `
+                          this.#narratorTextCompiler(phrase)
+                        : // npc text
+                          this.#characterTextCompiler(phrase)
                     : // dice roll result text
-                      `
-                        <blockquote>
-                            <strong>${phrase.role}:</strong>
-                            выбросил ${phrase.result}
-                        </blockquote>
-                    `
+                      this.#diceRollCompiler({ ...phrase, sum: phrase.result + phrase.base })
             )
-            .join('')
-            .replace(/\s+/g, ' ')
-            .trim()
+            .join('\n')
 
         if (!answer) return
 
@@ -337,7 +338,9 @@ class ImaginationBot {
                 // generating voice reply
                 await this.textToVoiceFile(
                     phrase.type === ResponseTypes.Dice
-                        ? `${phrase.role} выбросил ${this.numbers[phrase.result.toString()]}`
+                        ? `${phrase.role} при проверке навыка ${phrase.skill} выбросил ${
+                              this.numbers[phrase.result.toString()]
+                          } плюс ${phrase.base} итого ${phrase.result + phrase.base}`
                         : phrase.text,
                     replyPath,
                     phrase.type === ResponseTypes.Dice ? 'nova' : phrase.voice

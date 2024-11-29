@@ -15,12 +15,12 @@ Working features:
 TODO:
 
 -   Asking about new game settings
+-   Add random encounters to game logic
 -   Inventory
 -   Setting difficulty mode - creative / challenging
--   Generating images
+-   Generating images on demand
 -   Statistics (gameplay, tokens usage, etc)
 -   Optimize prompts
 -   Store chat messages session data as objects, not stringified JSON
 -   Installation/configure readme
--   Use templates for text output
 -   ...
